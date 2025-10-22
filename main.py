@@ -9,7 +9,8 @@ from csv_processor import csv_processor_view
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,  # Set to INFO to see detailed progress without DEBUG noise
+    # level=logging.DEBUG,  # Uncomment for full debug logging
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('alma_post_import.log'),
@@ -29,7 +30,7 @@ def main(page: ft.Page):
     
     def route_change(route):
         """Handle route changes."""
-        logger.debug(f"Route change to: {route}")
+        # logger.debug(f"Route change to: {route}")
         page.views.clear()
         
         # Route to CSV processor view (main view)
@@ -40,7 +41,7 @@ def main(page: ft.Page):
     
     def view_pop(view):
         """Handle back navigation."""
-        logger.debug("View pop navigation")
+        # logger.debug("View pop navigation")
         page.views.pop()
         top_view = page.views[-1]
         page.go(top_view.route)

@@ -10,6 +10,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+class AlmaServerError(Exception):
+    """Raised when Alma API servers are experiencing widespread issues."""
+    pass
+
+
 class AlmaAPIClient:
     """Client for interacting with the Alma API."""
     
@@ -27,12 +32,19 @@ class AlmaAPIClient:
             "Authorization": f"apikey {api_key}",
             "Accept": "application/json"
         }
+        self.consecutive_server_errors = 0  # Track consecutive 500 errors
+        self.max_consecutive_errors = 3     # Terminate after 3 consecutive 500 errors
         logger.info(f"AlmaAPIClient initialized with base_url: {base_url}")
         logger.debug(f"API key length: {len(api_key)} characters")
     
     def fetch_all_digital_titles(self, output_file: str = "All_Digital_Titles.csv") -> bool:
         """
-        Fetch all digital title bib records from Alma and save to CSV.
+        Fetch digital title information by using a different approach.
+        Instead of fetching all records upfront, we'll create a lookup method
+        that queries individual records as needed.
+        
+        For now, this creates an empty CSV file and returns True to indicate
+        the lookup method should be used instead.
         
         Args:
             output_file: Path to the output CSV file
@@ -40,86 +52,23 @@ class AlmaAPIClient:
         Returns:
             True if successful, False otherwise
         """
-        logger.info("Starting to fetch all digital title bib records from Alma")
+        logger.info("Setting up digital title lookup (individual record approach)")
         try:
-            all_records = []
-            offset = 0
-            limit = 100  # Fetch 100 records per request
-            total_fetched = 0
+            # Create an empty CSV file with headers
+            # The actual lookup will be done individually for each originating_system_id
+            output_path = Path(output_file)
             
-            while True:
-                # Query for digital titles using Alma bibs
-                url = f"{self.base_url}/almaws/v1/bibs"
-                params = {
-                    "q": "rtype,exact,digital",  # Query for digital resource type
-                    "limit": limit,
-                    "offset": offset
-                }
-                
-                logger.debug(f"Fetching digital titles - offset: {offset}, limit: {limit}")
-                response = requests.get(url, headers=self.headers, params=params, timeout=60)
-                
-                if response.status_code != 200:
-                    logger.error(f"API error: {response.status_code} - {response.text}")
-                    return False
-                
-                data = response.json()
-                
-                if "docs" not in data or len(data["docs"]) == 0:
-                    logger.info(f"No more records found. Total fetched: {total_fetched}")
-                    break
-                
-                # Extract relevant information from each record
-                for doc in data["docs"]:
-                    record = {}
-                    
-                    # Extract MMS ID
-                    if "pnx" in doc and "control" in doc["pnx"]:
-                        control = doc["pnx"]["control"]
-                        if "sourcerecordid" in control and len(control["sourcerecordid"]) > 0:
-                            record["mms_id"] = control["sourcerecordid"][0]
-                        elif "recordid" in control and len(control["recordid"]) > 0:
-                            record["mms_id"] = control["recordid"][0]
-                    
-                    # Extract dc:identifier values
-                    if "pnx" in doc and "addata" in doc["pnx"]:
-                        addata = doc["pnx"]["addata"]
-                        identifiers = []
-                        if "identifier" in addata:
-                            identifiers = addata["identifier"]
-                        record["dc_identifiers"] = "|".join(identifiers) if identifiers else ""
-                    
-                    if "mms_id" in record:
-                        all_records.append(record)
-                        total_fetched += 1
-                
-                logger.info(f"Fetched {len(data['docs'])} records, total so far: {total_fetched}")
-                
-                # Check if we've fetched all records
-                if len(data["docs"]) < limit:
-                    break
-                
-                offset += limit
+            with open(output_path, 'w', encoding='utf-8', newline='') as f:
+                fieldnames = ["mms_id", "dc_identifiers"]
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
             
-            # Write to CSV
-            if all_records:
-                output_path = Path(output_file)
-                logger.info(f"Writing {len(all_records)} records to {output_path}")
-                
-                with open(output_path, 'w', encoding='utf-8', newline='') as f:
-                    fieldnames = ["mms_id", "dc_identifiers"]
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(all_records)
-                
-                logger.info(f"Successfully wrote {len(all_records)} digital title records to {output_file}")
-                return True
-            else:
-                logger.warning("No digital title records found")
-                return False
+            logger.info(f"Created lookup CSV file: {output_file}")
+            logger.info("Note: Digital titles will be looked up individually during processing")
+            return True
                 
         except Exception as e:
-            logger.exception(f"Error fetching digital titles: {str(e)}")
+            logger.exception(f"Error setting up digital titles lookup: {str(e)}")
             return False
     
     def get_mms_id_by_originating_system_id(self, originating_system_id: str) -> Optional[str]:
@@ -132,55 +81,110 @@ class AlmaAPIClient:
         Returns:
             The MMS ID if found, None otherwise
         """
-        logger.debug(f"Querying Primo Search API for originating_system_id in dc:identifier: {originating_system_id}")
-        try:
-            # Search for the record using Primo Search with dc:identifier query
-            # Using the Primo Search endpoint
-            url = f"{self.base_url}/primo/v1/search"
-            params = {
-                "q": f'dc:identifier,contains,{originating_system_id}',
-                "limit": 1,
-                "offset": 0
-            }
-            
-            logger.debug(f"API request - URL: {url}, params: {params}")
-            response = requests.get(url, headers=self.headers, params=params, timeout=30)
-            logger.debug(f"API response - Status: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                # The API returns docs in the response
-                if "docs" in data and len(data["docs"]) > 0:
-                    # Extract the MMS ID from the pnx section
-                    doc = data["docs"][0]
-                    if "pnx" in doc and "control" in doc["pnx"]:
-                        control = doc["pnx"]["control"]
-                        # MMS ID is typically in the sourcerecordid or recordid field
-                        mms_id = None
-                        if "sourcerecordid" in control and len(control["sourcerecordid"]) > 0:
-                            mms_id = control["sourcerecordid"][0]
-                        elif "recordid" in control and len(control["recordid"]) > 0:
-                            mms_id = control["recordid"][0]
-                        
-                        if mms_id:
-                            logger.info(f"Successfully found MMS ID: {mms_id} for {originating_system_id}")
-                            return mms_id
-                        else:
-                            logger.debug(f"No MMS ID found in control section for {originating_system_id}")
-                    else:
-                        logger.debug(f"No pnx/control section in response for {originating_system_id}")
-                else:
-                    logger.debug(f"No docs found in response for {originating_system_id}")
-            elif response.status_code == 400:
-                # No results found
-                logger.debug(f"No results found (400 status) for {originating_system_id}")
-                return None
-            else:
-                logger.error(f"API error: {response.status_code} - {response.text}")
-                return None
-                
-        except Exception as e:
-            logger.exception(f"Error querying Primo Search API for {originating_system_id}: {str(e)}")
-            return None
+        import time
         
+        logger.info(f"Starting search for originating_system_id: {originating_system_id}")
+        logger.debug(f"Querying Primo Search API for originating_system_id in dc:identifier: {originating_system_id}")
+        
+        # Retry logic for server errors
+        max_retries = 5  # Increased from 3 to 5
+        retry_delay = 2  # Increased from 1 to 2 seconds
+        
+        for attempt in range(max_retries):
+            try:
+                # Search for the record using Primo Search with dc:identifier query
+                url = f"{self.base_url}/primo/v1/search"
+                params = {
+                    "q": f'any,contains,{originating_system_id}',  # Try broader search
+                    "limit": 1,
+                    "offset": 0
+                }
+                
+                logger.info(f"Making API request (attempt {attempt + 1}/{max_retries}) for {originating_system_id}")
+                logger.debug(f"API request - URL: {url}, params: {params} (attempt {attempt + 1}/{max_retries})")
+                response = requests.get(url, headers=self.headers, params=params, timeout=30)
+                logger.info(f"API response received - Status: {response.status_code}")
+                logger.debug(f"API response - Status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    # Success - reset consecutive error counter
+                    self.consecutive_server_errors = 0
+                    data = response.json()
+                    logger.info(f"Parsing response data for {originating_system_id}")
+                    # The API returns docs in the response
+                    if "docs" in data and len(data["docs"]) > 0:
+                        logger.info(f"Found {len(data['docs'])} docs in response for {originating_system_id}")
+                        # Extract the MMS ID from the pnx section
+                        doc = data["docs"][0]
+                        if "pnx" in doc and "control" in doc["pnx"]:
+                            control = doc["pnx"]["control"]
+                            # MMS ID is typically in the sourcerecordid or recordid field
+                            mms_id = None
+                            if "sourcerecordid" in control and len(control["sourcerecordid"]) > 0:
+                                mms_id = control["sourcerecordid"][0]
+                            elif "recordid" in control and len(control["recordid"]) > 0:
+                                mms_id = control["recordid"][0]
+                            
+                            if mms_id:
+                                logger.info(f"Successfully found MMS ID: {mms_id} for {originating_system_id}")
+                                return mms_id
+                            else:
+                                logger.info(f"No MMS ID found in control section for {originating_system_id}")
+                                logger.debug(f"No MMS ID found in control section for {originating_system_id}")
+                        else:
+                            logger.info(f"No pnx/control section in response for {originating_system_id}")
+                            logger.debug(f"No pnx/control section in response for {originating_system_id}")
+                    else:
+                        logger.info(f"No docs found in response for {originating_system_id}")
+                        logger.debug(f"No docs found in response for {originating_system_id}")
+                        return None  # No results found, no need to retry
+                
+                elif response.status_code == 400:
+                    # No results found - reset consecutive error counter and don't retry
+                    self.consecutive_server_errors = 0
+                    logger.info(f"No results found (400 status) for {originating_system_id}")
+                    logger.debug(f"No results found (400 status) for {originating_system_id}")
+                    return None
+                
+                elif response.status_code == 500:
+                    # Server error - track consecutive errors and potentially terminate
+                    error_text = response.text
+                    logger.warning(f"Server error (attempt {attempt + 1}/{max_retries}) for {originating_system_id}: {response.status_code} - {error_text}")
+                    
+                    if attempt < max_retries - 1:  # Don't sleep on the last attempt
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        # All retries failed for this request - check if we should terminate
+                        self.consecutive_server_errors += 1
+                        logger.error(f"Max retries reached for {originating_system_id} (consecutive server errors: {self.consecutive_server_errors})")
+                        
+                        if self.consecutive_server_errors >= self.max_consecutive_errors:
+                            error_msg = (f"Alma API servers are experiencing widespread issues. "
+                                       f"Encountered {self.consecutive_server_errors} consecutive 500 Internal Server Errors. "
+                                       f"Terminating processing to avoid wasting time. "
+                                       f"Please try again later when Alma's servers have recovered.")
+                            logger.error(error_msg)
+                            raise AlmaServerError(error_msg)
+                        
+                        return None
+                
+                else:
+                    # Other error - reset consecutive error counter and don't retry
+                    self.consecutive_server_errors = 0
+                    logger.error(f"API error: {response.status_code} - {response.text}")
+                    return None
+                    
+            except Exception as e:
+                logger.error(f"Exception occurred querying Primo Search API for {originating_system_id}: {str(e)}")
+                logger.exception(f"Error querying Primo Search API for {originating_system_id}: {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying due to exception in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    return None
+        
+        logger.info(f"Exhausted all retry attempts for {originating_system_id}")
         return None

@@ -5,7 +5,7 @@ import csv
 import logging
 import flet as ft
 from pathlib import Path
-from alma_api import AlmaAPIClient
+from alma_api import AlmaAPIClient, AlmaServerError
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +37,16 @@ def csv_processor_view(page: ft.Page):
             if api_key_field.current.value:
                 process_button.current.disabled = False
                 process_button.current.update()
-                logger.debug("Process button enabled (file and API key present)")
+                # logger.debug("Process button enabled (file and API key present)")
         else:
-            logger.debug("File picker cancelled")
+            # logger.debug("File picker cancelled")
+            pass
     
     def on_api_key_change(e):
         """Handle API key field change."""
         has_api_key = bool(api_key_field.current.value)
         has_file = bool(selected_file_path.current.value)
-        logger.debug(f"API key change - has_api_key: {has_api_key}, has_file: {has_file}")
+        # logger.debug(f"API key change - has_api_key: {has_api_key}, has_file: {has_file}")
         
         if has_api_key and has_file:
             process_button.current.disabled = False
@@ -70,55 +71,40 @@ def csv_processor_view(page: ft.Page):
         # Disable button during processing
         process_button.current.disabled = True
         process_button.current.update()
-        logger.debug("Process button disabled during processing")
+        # logger.debug("Process button disabled during processing")
         
         try:
             # Initialize Alma API client
             logger.info("Initializing Alma API client")
             client = AlmaAPIClient(api_key)
             
-            # Step 1: Fetch all digital titles from Alma
-            progress_text.current.value = "Step 1/2: Fetching all digital titles from Alma..."
+            # Step 1: Initialize the digital titles lookup system
+            progress_text.current.value = "Step 1/2: Initializing Alma API connection..."
             progress_text.current.color = ft.Colors.BLUE
             progress_text.current.update()
             
             digital_titles_file = "All_Digital_Titles.csv"
-            logger.info("Fetching all digital title records from Alma")
+            logger.info("Setting up digital title lookup system")
             
             if not client.fetch_all_digital_titles(digital_titles_file):
-                progress_text.current.value = "Error: Failed to fetch digital titles from Alma"
+                progress_text.current.value = "Error: Failed to initialize digital titles lookup"
                 progress_text.current.color = ft.Colors.RED_800
                 progress_text.current.update()
                 process_button.current.disabled = False
                 process_button.current.update()
                 return
             
-            # Step 2: Load the digital titles into a lookup dictionary
-            logger.info(f"Loading digital titles from {digital_titles_file}")
+            # Step 2: Process the user's CSV file with individual lookups
+            logger.info("Using individual lookup approach for MMS IDs")
             progress_text.current.value = "Step 2/2: Processing your CSV file..."
             progress_text.current.update()
             
-            mms_lookup = {}  # Dictionary: originating_system_id -> mms_id
-            
-            with open(digital_titles_file, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for digital_row in reader:
-                    mms_id = digital_row.get('mms_id', '').strip()
-                    dc_identifiers = digital_row.get('dc_identifiers', '')
-                    
-                    # Split multiple identifiers and add each to the lookup
-                    if mms_id and dc_identifiers:
-                        identifiers = dc_identifiers.split('|')
-                        for identifier in identifiers:
-                            identifier = identifier.strip()
-                            if identifier:
-                                mms_lookup[identifier] = mms_id
-            
-            logger.info(f"Loaded {len(mms_lookup)} identifier-to-MMS ID mappings")
+            # We'll do individual lookups instead of bulk loading
+            # This avoids the API issue with fetching all records at once
             
             # Step 3: Read the user's CSV file
             path = Path(file_path)
-            logger.debug(f"Reading user CSV file: {path}")
+            # logger.debug(f"Reading user CSV file: {path}")
             with open(path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
@@ -142,6 +128,7 @@ def csv_processor_view(page: ft.Page):
             error_count = 0
             
             logger.info(f"Beginning processing of {len(rows)} rows")
+            logger.info("Note: Using individual API lookups with retry logic for server errors")
             
             for i, row in enumerate(rows):
                 originating_system_id = row.get('originating_system_id', '').strip()
@@ -149,12 +136,14 @@ def csv_processor_view(page: ft.Page):
                 
                 # Only process if originating_system_id exists and mms_id is empty
                 if originating_system_id and not mms_id:
-                    logger.debug(f"Processing row {i+1}/{len(rows)}: originating_system_id={originating_system_id}")
+                    # logger.debug(f"Processing row {i+1}/{len(rows)}: originating_system_id={originating_system_id}")
                     progress_text.current.value = f"Processing row {i+1}/{len(rows)}: {originating_system_id}"
                     progress_text.current.update()
                     
-                    # Look up MMS ID in the digital titles data
-                    fetched_mms_id = mms_lookup.get(originating_system_id)
+                    # Look up MMS ID using individual API call
+                    logger.info(f"Row {i+1}: About to search for MMS ID for '{originating_system_id}'")
+                    fetched_mms_id = client.get_mms_id_by_originating_system_id(originating_system_id)
+                    logger.info(f"Row {i+1}: API call completed for '{originating_system_id}', result: {fetched_mms_id}")
                     
                     if fetched_mms_id:
                         logger.info(f"Row {i+1}: Found MMS ID {fetched_mms_id} for {originating_system_id}")
@@ -163,11 +152,17 @@ def csv_processor_view(page: ft.Page):
                     else:
                         logger.warning(f"Row {i+1}: No MMS ID found for {originating_system_id}")
                         error_count += 1
+                    
+                    # Small delay between requests to avoid overwhelming the server
+                    import time
+                    time.sleep(0.5)  # 500ms delay between requests
                 else:
                     if not originating_system_id:
-                        logger.debug(f"Row {i+1}: Skipped (no originating_system_id)")
+                        # logger.debug(f"Row {i+1}: Skipped (no originating_system_id)")
+                        pass
                     elif mms_id:
-                        logger.debug(f"Row {i+1}: Skipped (mms_id already exists: {mms_id})")
+                        # logger.debug(f"Row {i+1}: Skipped (mms_id already exists: {mms_id})")
+                        pass
                     skipped_count += 1
             
             # Step 5: Write updated data back to CSV
@@ -183,9 +178,28 @@ def csv_processor_view(page: ft.Page):
             progress_text.current.value = (
                 f"Processing complete!\n"
                 f"{summary}\n"
-                f"Digital titles saved to: {digital_titles_file}"
+                f"Results saved to your CSV file."
             )
             progress_text.current.color = ft.Colors.GREEN
+            progress_text.current.update()
+            
+        except AlmaServerError as server_error:
+            # Alma servers are experiencing widespread issues - terminate gracefully
+            logger.error(f"Alma server error - terminating processing: {str(server_error)}")
+            
+            # Calculate how many rows were processed before termination
+            try:
+                total_processed = updated_count + error_count + skipped_count
+            except NameError:
+                total_processed = 0  # Error occurred before processing started
+            
+            progress_text.current.value = (
+                f"Processing terminated due to Alma server issues.\n\n"
+                f"Alma's API servers are experiencing widespread problems.\n"
+                f"Please try again later when their servers have recovered.\n\n"
+                f"Rows processed before termination: {total_processed}"
+            )
+            progress_text.current.color = ft.Colors.ORANGE_800
             progress_text.current.update()
             
         except Exception as ex:
@@ -198,7 +212,7 @@ def csv_processor_view(page: ft.Page):
             # Re-enable button
             process_button.current.disabled = False
             process_button.current.update()
-            logger.debug("Process button re-enabled")
+            # logger.debug("Process button re-enabled")
     
     # Create file picker
     file_picker = ft.FilePicker(on_result=pick_file_result)
