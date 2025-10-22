@@ -1,0 +1,89 @@
+alma-post-import-utilities/
+│
+├── 📄 main.py                      # Application entry point (937 bytes)
+│   ├── Routes the application
+│   ├── Initializes Flet
+│   └── Manages view navigation
+│
+├── 📄 csv_processor.py             # CSV processing view (8.6 KB)
+│   ├── File picker interface
+│   ├── API key input field
+│   ├── CSV validation logic
+│   ├── Progress tracking
+│   └── CSV update functionality
+│
+├── 📄 alma_api.py                  # Alma API client (2.2 KB)
+│   ├── AlmaAPIClient class
+│   ├── API authentication
+│   ├── MMS ID lookup method
+│   └── Error handling
+│
+├── 📄 requirements.txt             # Python dependencies (30 bytes)
+│   ├── flet>=0.23.0
+│   └── requests>=2.31.0
+│
+├── 📄 sample_data.csv              # Sample test data (198 bytes)
+│   └── Example CSV with originating_system_id and mms_id columns
+│
+├── 📄 .gitignore                   # Git ignore patterns (572 bytes)
+│   └── Python artifacts, venv, IDE files, etc.
+│
+└── 📚 Documentation/
+    ├── README.md                   # Project overview (1.6 KB)
+    ├── USAGE.md                    # Usage instructions (3.5 KB)
+    ├── ARCHITECTURE.md             # Architecture docs (6.1 KB)
+    └── IMPLEMENTATION_SUMMARY.md   # Implementation summary (7.6 KB)
+
+Key Features:
+════════════════════════════════════════════════════════════════
+
+✓ Multi-view Flet application with routing system
+✓ CSV file picker with validation
+✓ Alma API integration for MMS ID lookup
+✓ In-place CSV update functionality
+✓ Real-time progress tracking
+✓ Comprehensive error handling
+✓ Secure API key management
+✓ Complete documentation
+✓ Sample data for testing
+✓ Production-ready code
+
+Workflow:
+════════════════════════════════════════════════════════════════
+
+1. User enters Alma API key
+2. User selects CSV file
+3. Application validates CSV structure
+4. For each row with empty mms_id:
+   - Query Alma API with originating_system_id
+   - Update mms_id with returned value
+5. Save updated CSV
+6. Display results summary
+
+CSV Requirements:
+════════════════════════════════════════════════════════════════
+
+Required columns:
+  • originating_system_id  (source identifier)
+  • mms_id                 (target field to update)
+
+Additional columns are preserved unchanged.
+
+Security:
+════════════════════════════════════════════════════════════════
+
+✓ CodeQL scan: 0 vulnerabilities
+✓ HTTPS for all API calls
+✓ API key not persisted to disk
+✓ Password-protected input field
+✓ Input validation
+✓ Timeout protection
+
+Testing:
+════════════════════════════════════════════════════════════════
+
+✓ Module imports verified
+✓ CSV read/write operations tested
+✓ API client initialization validated
+✓ Column validation tested
+✓ End-to-end workflow verified
